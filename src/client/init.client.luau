@@ -4,6 +4,9 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local GuiService = game:GetService("GuiService")
+local ButterInteraction = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ButterInteraction"))
+print("[ButterClient] Bubbly UI v4 loaded:", script:GetFullName())
 
 local player = Players.LocalPlayer
 local remotes = ReplicatedStorage:WaitForChild("ButterRemotes")
@@ -23,10 +26,12 @@ local selectedButterId = nil
 local selectedShopButterId = nil
 local previewModel = nil
 local previewRotation = 0
+local previewBasePivot = CFrame.identity
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "SquishTheButterGui"
 gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local root = Instance.new("Frame")
@@ -596,7 +601,6 @@ overlayClickButton.Text = ""
 overlayClickButton.ZIndex = 60
 overlayClickButton.Parent = crackingOverlay
 
-local crackMarks = {}
 local lastClickPosition = nil
 
 local revealLabel = Instance.new("TextLabel")
@@ -636,6 +640,205 @@ local revealCloseCorner = Instance.new("UICorner")
 revealCloseCorner.CornerRadius = UDim.new(0, 8)
 revealCloseCorner.Parent = revealCloseButton
 
+local UI = {}
+do
+	local ink = Color3.fromRGB(39, 43, 65)
+	local mint = Color3.fromRGB(87, 225, 168)
+	local blue = Color3.fromRGB(79, 190, 250)
+	local pink = Color3.fromRGB(255, 104, 148)
+	function UI.round(object, radius)
+		local shape = object:FindFirstChildWhichIsA("UICorner") or Instance.new("UICorner", object)
+		shape.CornerRadius = UDim.new(0, radius)
+	end
+	function UI.button(button, color, radius)
+		button.AutoButtonColor = false
+		button.BorderSizePixel = 0
+		button.BackgroundColor3 = color
+		button.Font = Enum.Font.FredokaOne
+		button.TextColor3 = ink
+		UI.round(button, radius or 16)
+		local outline = button:FindFirstChildWhichIsA("UIStroke") or Instance.new("UIStroke", button)
+		outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		outline.Color = color:Lerp(ink, 0.55)
+		outline.Thickness = 2
+		local gradient = Instance.new("UIGradient")
+		gradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+			ColorSequenceKeypoint.new(0.65, Color3.fromRGB(245, 245, 245)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(182, 182, 182)),
+		})
+		gradient.Rotation = 90
+		gradient.Parent = button
+		local shine = Instance.new("Frame")
+		shine.Name = "Shine"
+		shine.BackgroundColor3 = Color3.new(1, 1, 1)
+		shine.BackgroundTransparency = 0.52
+		shine.BorderSizePixel = 0
+		shine.Position = UDim2.fromOffset(12, 5)
+		shine.Size = UDim2.new(1, -24, 0, 3)
+		shine.Parent = button
+		UI.round(shine, 3)
+		local scale = Instance.new("UIScale", button)
+		local tween
+		local function animate(value)
+			if tween then tween:Cancel() end
+			tween = TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = value })
+			tween:Play()
+		end
+		button.MouseEnter:Connect(function() animate(1.025) end)
+		button.MouseLeave:Connect(function() animate(1) end)
+		button.SelectionGained:Connect(function() animate(1.025) end)
+		button.SelectionLost:Connect(function() animate(1) end)
+		button.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then animate(0.95) end
+		end)
+		button.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then animate(1) end
+		end)
+		button:GetPropertyChangedSignal("Visible"):Connect(function()
+			if not button.Visible then
+				if tween then tween:Cancel() end
+				scale.Scale = 1
+			end
+		end)
+	end
+	local surfaces = {}
+	local function panel(panelObject, width, height, color)
+		panelObject.Size = UDim2.fromOffset(width, height)
+		panelObject.BackgroundColor3 = color
+		UI.round(panelObject, 24)
+		local edge = panelObject:FindFirstChildWhichIsA("UIStroke") or Instance.new("UIStroke", panelObject)
+		edge.Color = Color3.fromRGB(184, 229, 239)
+		edge.Thickness = 3
+		edge.Transparency = 0.12
+		local shadow = Instance.new("Frame")
+		shadow.Name = "PanelShadow"
+		shadow.AnchorPoint = panelObject.AnchorPoint
+		shadow.Position = panelObject.Position + UDim2.fromOffset(0, 7)
+		shadow.Size = panelObject.Size
+		shadow.BackgroundColor3 = Color3.fromRGB(14, 17, 28)
+		shadow.BackgroundTransparency = 0.58
+		shadow.BorderSizePixel = 0
+		shadow.Visible = panelObject.Visible
+		shadow.ZIndex = 1
+		shadow.Parent = gui
+		panelObject.ZIndex = 2
+		UI.round(shadow, 24)
+		local scale = Instance.new("UIScale", panelObject)
+		local shadowScale = Instance.new("UIScale", shadow)
+		local entry = { object = panelObject, scale = scale, shadowScale = shadowScale, width = width, height = height, target = 1 }
+		table.insert(surfaces, entry)
+		panelObject:GetPropertyChangedSignal("Visible"):Connect(function()
+			shadow.Visible = panelObject.Visible
+			if entry.tween then entry.tween:Cancel() end
+			if entry.shadowTween then entry.shadowTween:Cancel() end
+			if panelObject.Visible then
+				scale.Scale = entry.target * 0.92
+				shadowScale.Scale = scale.Scale
+				local info = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+				entry.tween = TweenService:Create(scale, info, { Scale = entry.target })
+				entry.shadowTween = TweenService:Create(shadowScale, info, { Scale = entry.target })
+				entry.tween:Play()
+				entry.shadowTween:Play()
+			end
+		end)
+	end
+	shopLayout:Destroy()
+	shopPadding:Destroy()
+	previewLayout:Destroy()
+	previewPadding:Destroy()
+	panel(shopPanel, 440, 438, Color3.fromRGB(245, 252, 255))
+	panel(previewPanel, 390, 380, Color3.fromRGB(245, 252, 255))
+	panel(beebohPanel, 700, 580, Color3.fromRGB(0, 0, 0))
+	beebohPanel.BackgroundTransparency = 0.28
+	shopTitle.Position = UDim2.fromOffset(22, 16)
+	shopTitle.Size = UDim2.new(1, -86, 0, 40)
+	shopTitle.Font = Enum.Font.FredokaOne
+	shopTitle.TextColor3 = ink
+	butterList.Position = UDim2.fromOffset(20, 76)
+	butterList.Size = UDim2.new(1, -40, 0, 272)
+	butterList.ScrollBarImageColor3 = blue
+	buyButton.Position = UDim2.new(0, 20, 1, -68)
+	buyButton.Size = UDim2.new(1, -40, 0, 48)
+	buyButton.TextSize = 17
+	previewTitle.Position = UDim2.fromOffset(22, 16)
+	previewTitle.Size = UDim2.new(1, -86, 0, 38)
+	previewTitle.Font = Enum.Font.FredokaOne
+	previewTitle.TextColor3 = ink
+	viewport.Position = UDim2.fromOffset(18, 65)
+	viewport.Size = UDim2.new(1, -36, 0, 195)
+	viewport.BackgroundTransparency = 1
+	previewInfo.Position = UDim2.fromOffset(22, 269)
+	previewInfo.Size = UDim2.new(1, -44, 0, 34)
+	previewInfo.TextColor3 = ink
+	previewCrackButton.Position = UDim2.new(0, 20, 1, -66)
+	previewCrackButton.Size = UDim2.new(1, -40, 0, 46)
+	for _, label in ipairs({beebohPanelTitle, beebohCapacity, beebohDetailName, revealLabel, crackingTitle}) do label.Font = Enum.Font.FredokaOne end
+	beebohPanelTitle.Position = UDim2.fromOffset(24, 18)
+	beebohPanelTitle.TextXAlignment = Enum.TextXAlignment.Left
+	beebohPanelTitle.TextColor3 = Color3.fromRGB(137, 233, 246)
+	beebohList.Position = UDim2.fromOffset(24, 84)
+	beebohList.Size = UDim2.new(1, -302, 1, -222)
+	beebohList.ScrollBarImageColor3 = mint
+	beebohGridLayout.CellSize = UDim2.fromOffset(86, 106)
+	beebohGridLayout.CellPadding = UDim2.fromOffset(10, 12)
+	collection.Position = UDim2.new(0, 24, 1, -128)
+	collection.Size = UDim2.new(1, -302, 0, 64)
+	collection.TextSize = 14
+	beebohCapacity.Position = UDim2.new(0, 24, 1, -56)
+	beebohCapacity.Size = UDim2.new(1, -302, 0, 30)
+	beebohCapacity.TextSize = 19
+	beebohDetailPanel.Position = UDim2.new(1, -18, 0, 76)
+	beebohDetailPanel.Size = UDim2.new(0, 240, 1, -94)
+	beebohDetailPanel.BackgroundTransparency = 1
+	beebohDetailStroke.Enabled = false
+	beebohDetailViewport.Position = UDim2.fromOffset(34, 66)
+	beebohDetailViewport.Size = UDim2.fromOffset(172, 142)
+	beebohDetailInfo.Position = UDim2.fromOffset(16, 218)
+	beebohDetailInfo.Size = UDim2.new(1, -28, 0, 104)
+	beebohDetailInfo.TextSize = 17
+	beebohEquipButton.Position = UDim2.new(0, 14, 1, -156)
+	beebohRenameButton.Position = UDim2.new(0, 14, 1, -104)
+	beebohDeleteButton.Position = UDim2.new(0, 14, 1, -52)
+	UI.button(shopButton, mint, 20)
+	UI.button(beebohInventoryButton, blue, 20)
+	UI.button(buyButton, mint)
+	UI.button(previewCrackButton, Color3.fromRGB(255, 213, 81))
+	UI.button(beebohEquipButton, blue)
+	UI.button(beebohRenameButton, mint)
+	UI.button(beebohDeleteButton, pink)
+	UI.button(revealCloseButton, mint)
+	for _, button in ipairs({shopCloseButton, previewCloseButton, beebohCloseButton}) do
+		button.Position = UDim2.new(1, -14, 0, 14)
+		button.Size = UDim2.fromOffset(36, 36)
+		button.ZIndex = 8
+		UI.button(button, Color3.fromRGB(255, 89, 109), 18)
+		button.TextColor3 = Color3.new(1, 1, 1)
+	end
+	UI.round(butterHotbar, 22)
+	butterHotbar.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+	butterHotbar.BackgroundTransparency = 0.24
+	UI.round(revealLabel, 20)
+	revealLabel.BackgroundColor3 = Color3.fromRGB(211, 255, 231)
+	crackingOverlay.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
+	crackingTitle.TextColor3 = Color3.fromRGB(255, 228, 131)
+	local hotbarScale = Instance.new("UIScale", butterHotbar)
+	local lastSize
+	RunService.RenderStepped:Connect(function()
+		local camera = Workspace.CurrentCamera
+		if not camera or camera.ViewportSize == lastSize then return end
+		lastSize = camera.ViewportSize
+		for _, entry in ipairs(surfaces) do
+			entry.target = math.min(1, (lastSize.X - 30) / entry.width, (lastSize.Y - 70) / entry.height)
+			if entry.tween then entry.tween:Cancel() end
+			if entry.shadowTween then entry.shadowTween:Cancel() end
+			entry.scale.Scale = entry.target
+			entry.shadowScale.Scale = entry.target
+		end
+		hotbarScale.Scale = math.min(1, (lastSize.X - 24) / 560)
+	end)
+end
+
 local shopButterButtons = {}
 local butterHotbarButtons = {}
 local beebohRows = {}
@@ -647,8 +850,65 @@ local crackingModel = nil
 local crackingButterId = nil
 local crackingStage = 0
 local crackingBusy = false
+local butterInteraction = nil
+local crackingSession = 0
 local revealModel = nil
 local CRACKING_BUTTER_CFRAME = CFrame.Angles(0, math.rad(180), 0)
+
+local function orientButterForDisplay(model, butterId)
+	if butterId == "Salted" then
+		model:PivotTo(CRACKING_BUTTER_CFRAME)
+		return model:GetPivot()
+	end
+	local body = model:FindFirstChild("ButterBody", true)
+	local labels = {}
+	local largestLabel = nil
+	local largestArea = 0
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") and string.find(part.Name, "_Text", 1, true) then
+			table.insert(labels, part)
+			local s = part.Size
+			local area = math.max(s.X * s.Y, s.X * s.Z, s.Y * s.Z)
+			if area > largestArea then
+				largestLabel, largestArea = part, area
+			end
+		end
+	end
+	if not body or not body:IsA("BasePart") or not largestLabel then
+		model:PivotTo(CRACKING_BUTTER_CFRAME)
+		return model:GetPivot()
+	end
+	local function axes(part)
+		return {
+			{ size = part.Size.X, vector = part.CFrame.RightVector },
+			{ size = part.Size.Y, vector = part.CFrame.UpVector },
+			{ size = part.Size.Z, vector = -part.CFrame.LookVector },
+		}
+	end
+	local labelAxes = axes(largestLabel)
+	table.sort(labelAxes, function(a, b) return a.size < b.size end)
+	local front = labelAxes[1].vector
+	if front:Dot(largestLabel.Position - body.Position) < 0 then front = -front end
+	local bodyAxes = axes(body)
+	table.sort(bodyAxes, function(a, b) return a.size > b.size end)
+	local right = bodyAxes[1].vector
+	right -= front * right:Dot(front)
+	if right.Magnitude < 0.001 then
+		model:PivotTo(CRACKING_BUTTER_CFRAME)
+		return model:GetPivot()
+	end
+	right = right.Unit
+	-- The original weight block is farther right than the main lettering extends left.
+	local furthest = 0
+	for _, label in ipairs(labels) do
+		local distance = (label.Position - body.Position):Dot(right)
+		if math.abs(distance) > math.abs(furthest) then furthest = distance end
+	end
+	if furthest < 0 then right = -right end
+	local labelFrame = CFrame.fromMatrix(body.Position, right, front:Cross(right).Unit, front)
+	model:PivotTo(labelFrame:Inverse() * model:GetPivot())
+	return model:GetPivot()
+end
 
 local function findButterModel(butter)
 	if butterModels then
@@ -715,10 +975,6 @@ local function preparePreviewModel(source, targetViewport)
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = true
 			descendant.CanCollide = false
-			if string.find(string.lower(descendant.Name), "wrapper") then
-				descendant.Material = Enum.Material.Glass
-				descendant.Transparency = math.max(descendant.Transparency, 0.35)
-			end
 		elseif descendant:IsA("ProximityPrompt") or descendant:IsA("Script") or descendant:IsA("LocalScript") then
 			descendant:Destroy()
 		end
@@ -754,6 +1010,7 @@ local function clearPreview()
 	end
 
 	previewModel = nil
+	previewBasePivot = CFrame.identity
 end
 
 local function createButterPreviewModel(butter)
@@ -764,6 +1021,7 @@ local function createButterPreviewModel(butter)
 		previewModel = preparePreviewModel(sourceModel, viewport)
 		if previewModel then
 			previewRotation = 0
+			previewBasePivot = orientButterForDisplay(previewModel, butter.Id)
 			framePreviewModel()
 			return
 		end
@@ -809,10 +1067,15 @@ local function createButterPreviewModel(butter)
 	model.PrimaryPart = stick
 	previewModel = model
 	previewRotation = 0
+	previewBasePivot = orientButterForDisplay(previewModel, butter.Id)
 	framePreviewModel()
 end
 
 local function clearCrackingViewport()
+	if butterInteraction then
+		butterInteraction:Destroy()
+		butterInteraction = nil
+	end
 	for _, child in ipairs(crackingViewport:GetChildren()) do
 		if child ~= crackingCamera then
 			child:Destroy()
@@ -821,51 +1084,6 @@ local function clearCrackingViewport()
 
 	crackingModel = nil
 	revealModel = nil
-end
-
-local function clearCrackMarks()
-	for _, mark in ipairs(crackMarks) do
-		mark:Destroy()
-	end
-
-	table.clear(crackMarks)
-end
-
-local function addCrackSegment(center, length, thickness, rotation)
-	local segment = Instance.new("Frame")
-	segment.AnchorPoint = Vector2.new(0.5, 0.5)
-	segment.BackgroundColor3 = Color3.fromRGB(69, 43, 18)
-	segment.BorderSizePixel = 0
-	segment.Position = UDim2.fromOffset(center.X, center.Y)
-	segment.Rotation = rotation
-	segment.Size = UDim2.fromOffset(thickness, length)
-	segment.ZIndex = 56
-	segment.Parent = crackingOverlay
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(1, 0)
-	corner.Parent = segment
-
-	table.insert(crackMarks, segment)
-	return segment
-end
-
-local function addClickCrack(screenPosition, stage)
-	local overlayPosition = crackingOverlay.AbsolutePosition
-	local overlaySize = crackingOverlay.AbsoluteSize
-	local x = math.clamp(screenPosition.X - overlayPosition.X, overlaySize.X * 0.18, overlaySize.X * 0.82)
-	local y = math.clamp(screenPosition.Y - overlayPosition.Y, overlaySize.Y * 0.22, overlaySize.Y * 0.72)
-	local center = Vector2.new(x, y)
-	local baseLength = 54 + stage * 22
-	local baseRotation = math.random(-55, 55)
-
-	addCrackSegment(center, baseLength, 4 + stage, baseRotation)
-	addCrackSegment(center + Vector2.new(math.random(-18, 18), math.random(-14, 14)), baseLength * 0.58, 3, baseRotation + math.random(36, 66))
-	addCrackSegment(center + Vector2.new(math.random(-18, 18), math.random(-14, 14)), baseLength * 0.48, 3, baseRotation - math.random(36, 66))
-
-	if stage >= 3 then
-		addCrackSegment(center + Vector2.new(math.random(-24, 24), math.random(-18, 18)), baseLength * 0.7, 3, baseRotation + math.random(82, 112))
-	end
 end
 
 local function createFallbackButterModel(butter, targetViewport)
@@ -937,18 +1155,21 @@ local function loadCrackingButterModel(butterId)
 
 	butter.Id = butterId
 	clearCrackingViewport()
+	local world = Instance.new("WorldModel")
+	world.Parent = crackingViewport
 
 	local sourceModel = findButterModel(butter)
 	if sourceModel then
-		crackingModel = preparePreviewModel(sourceModel, crackingViewport)
+		crackingModel = preparePreviewModel(sourceModel, world)
 	end
 
 	if not crackingModel then
-		crackingModel = createFallbackButterModel(butter, crackingViewport)
+		crackingModel = createFallbackButterModel(butter, world)
 	end
 
-	crackingModel:PivotTo(CRACKING_BUTTER_CFRAME)
+	orientButterForDisplay(crackingModel, butterId)
 	frameModel(crackingModel, crackingCamera, 1.35, 38)
+	butterInteraction = ButterInteraction.new(crackingModel, world, crackingViewport, crackingCamera)
 end
 
 local function spawnOverlaySparkles(amount)
@@ -988,7 +1209,6 @@ end
 
 local function createBeebohReveal(prize)
 	clearCrackingViewport()
-	clearCrackMarks()
 
 	local rarity = state.RarityConfig[prize.Rarity]
 	local sourceModel = findBeebohModel(prize)
@@ -1028,6 +1248,7 @@ local function createBeebohReveal(prize)
 end
 
 local function closeCrackingOverlay()
+	crackingSession += 1
 	crackingOverlay.Visible = false
 	crackingBusy = false
 	crackingStage = 0
@@ -1035,7 +1256,6 @@ local function closeCrackingOverlay()
 	lastClickPosition = nil
 	revealLabel.Visible = false
 	revealCloseButton.Visible = false
-	clearCrackMarks()
 	clearCrackingViewport()
 end
 
@@ -1064,6 +1284,7 @@ local function beginCrackingOverlay()
 	end
 
 	crackingButterId = selectedButterId
+	crackingSession += 1
 	crackingStage = 0
 	crackingBusy = false
 	revealLabel.Visible = false
@@ -1071,7 +1292,6 @@ local function beginCrackingOverlay()
 	crackingTitle.Text = `Crack {state.ButterConfig[selectedButterId].Name}`
 	crackingHint.Text = "Click the butter 3 times"
 	lastClickPosition = nil
-	clearCrackMarks()
 	loadCrackingButterModel(selectedButterId)
 	crackingOverlay.Visible = true
 end
@@ -1081,32 +1301,39 @@ local function hitCrackingButter()
 		return
 	end
 
+	local click = lastClickPosition or UserInputService:GetMouseLocation()
+	if not gui.IgnoreGuiInset then
+		local inset = GuiService:GetGuiInset()
+		click -= inset
+	end
+	local hit = butterInteraction and butterInteraction:Raycast(click)
+	if not hit then
+		return
+	end
 	crackingBusy = true
 	crackingStage += 1
-	addClickCrack(lastClickPosition or UserInputService:GetMouseLocation(), crackingStage)
-	spawnOverlaySparkles(5 + crackingStage * 2)
-
-	if crackingModel then
-		local offset = CRACKING_BUTTER_CFRAME * CFrame.Angles(0, 0, math.rad(math.random(-5, 5))) * CFrame.new(math.random(-12, 12) / 100, math.random(-7, 7) / 100, 0)
-		crackingModel:PivotTo(offset)
-		task.delay(0.08, function()
-			if crackingModel then
-				crackingModel:PivotTo(CRACKING_BUTTER_CFRAME)
-			end
-		end)
-	end
+	local session = crackingSession
+	butterInteraction:Hit(hit, crackingStage)
 
 	if crackingStage < 3 then
 		crackingHint.Text = `{3 - crackingStage} hits left`
-		task.delay(0.2, function()
-			crackingBusy = false
+		task.delay(0.3, function()
+			if session == crackingSession then
+				crackingBusy = false
+			end
 		end)
 		return
 	end
 
 	crackingHint.Text = "Cracking..."
-	task.delay(0.25, function()
+	task.delay(0.7, function()
+		if session ~= crackingSession then
+			return
+		end
 		local response = CrackButter:InvokeServer(crackingButterId)
+		if session ~= crackingSession then
+			return
+		end
 
 		if not response or not response.Ok then
 			applyResponse(response)
@@ -1126,7 +1353,9 @@ local function hitCrackingButter()
 		refresh()
 
 		task.delay(2.6, function()
-			closeCrackingOverlay()
+			if session == crackingSession then
+				closeCrackingOverlay()
+			end
 		end)
 	end)
 end
@@ -1183,6 +1412,7 @@ local function makeButterButton(butterId)
 	local buttonCorner = Instance.new("UICorner")
 	buttonCorner.CornerRadius = UDim.new(0, 8)
 	buttonCorner.Parent = button
+	UI.button(button, Color3.fromRGB(226, 241, 249), 12)
 
 	button.Activated:Connect(function()
 		if not state then
@@ -1219,7 +1449,7 @@ local function makeButterHotbarButton(butterId)
 
 	local button = Instance.new("TextButton")
 	button.AutoButtonColor = true
-	button.BackgroundColor3 = if butterId == selectedButterId then Color3.fromRGB(255, 216, 78) else Color3.fromRGB(255, 248, 214)
+	button.BackgroundColor3 = if butterId == selectedButterId then Color3.fromRGB(255, 216, 78) else Color3.fromRGB(229, 247, 255)
 	button.BorderSizePixel = 0
 	button.LayoutOrder = butter.Order
 	button.Size = UDim2.fromOffset(72, 72)
@@ -1234,6 +1464,7 @@ local function makeButterHotbarButton(butterId)
 	buttonStroke.Color = Color3.fromRGB(116, 86, 36)
 	buttonStroke.Thickness = 2
 	buttonStroke.Parent = button
+	UI.button(button, button.BackgroundColor3, 16)
 
 	local icon = Instance.new("ViewportFrame")
 	icon.BackgroundTransparency = 1
@@ -1248,7 +1479,7 @@ local function makeButterHotbarButton(butterId)
 
 	local iconModel = createButterViewportModel(butterId, icon)
 	if iconModel then
-		iconModel:PivotTo(CFrame.Angles(0, math.rad(180), 0))
+		orientButterForDisplay(iconModel, butterId)
 		frameModel(iconModel, iconCamera, 1.45, 40)
 	end
 
@@ -1400,11 +1631,13 @@ local function makeBeebohGridItem(beebohItem, index)
 	row.LayoutOrder = index
 	row.Text = ""
 	row.Parent = beebohList
+	UI.button(row, Color3.fromRGB(58, 66, 83), 18)
+	row.BackgroundTransparency = 0.22
 
 	local icon = Instance.new("ViewportFrame")
 	icon.BackgroundTransparency = 1
 	icon.BorderSizePixel = 0
-	icon.Position = UDim2.fromOffset(5, 0)
+	icon.Position = UDim2.fromOffset(13, 6)
 	icon.Size = UDim2.fromOffset(60, 60)
 	icon.Parent = row
 
@@ -1425,26 +1658,15 @@ local function makeBeebohGridItem(beebohItem, index)
 	name.TextColor3 = beebohColor
 	name.TextSize = 12
 	name.TextWrapped = true
-	name.Position = UDim2.fromOffset(0, 62)
-	name.Size = UDim2.new(1, 0, 0, 34)
+	name.Position = UDim2.fromOffset(4, 66)
+	name.Size = UDim2.new(1, -8, 0, 36)
 	name.Parent = row
 
 	local function selectThisBeeboh()
 		showBeebohDetail(beebohItem, index)
 	end
 
-	local hitbox = Instance.new("TextButton")
-	hitbox.BackgroundTransparency = 1
-	hitbox.BorderSizePixel = 0
-	hitbox.Text = ""
-	hitbox.Size = UDim2.fromScale(1, 1)
-	hitbox.Parent = row
-
 	row.Activated:Connect(function()
-		selectThisBeeboh()
-	end)
-
-	hitbox.Activated:Connect(function()
 		selectThisBeeboh()
 	end)
 
@@ -1512,7 +1734,7 @@ refresh = function()
 		local button = shopButterButtons[butterId]
 
 		button.LayoutOrder = butter.Order
-		button.BackgroundColor3 = if butterId == selectedShopButterId then Color3.fromRGB(255, 216, 78) else Color3.fromRGB(255, 238, 158)
+		button.BackgroundColor3 = if butterId == selectedShopButterId then Color3.fromRGB(255, 216, 78) else Color3.fromRGB(226, 241, 249)
 		button.Text = `{butter.Name}  |  Own: {owned}  |  Buy: {butter.Cost}`
 
 		makeButterHotbarButton(butterId)
@@ -1700,23 +1922,19 @@ buyButton.Activated:Connect(function()
 	applyResponse(BuyButter:InvokeServer(selectedShopButterId))
 end)
 
+RunService.RenderStepped:Connect(function(deltaTime)
+	if crackingOverlay.Visible or not previewPanel.Visible or not previewModel or not previewModel.Parent then
+		return
+	end
+	previewRotation = (previewRotation + deltaTime * 0.9) % (2 * math.pi)
+	previewModel:PivotTo(CFrame.Angles(0, previewRotation, 0) * previewBasePivot)
+end)
+
 applyResponse(GetState:InvokeServer())
 
 task.spawn(function()
 	while true do
 		task.wait(1)
 		applyResponse(GetState:InvokeServer())
-	end
-end)
-
-RunService.RenderStepped:Connect(function(deltaTime)
-	previewRotation += deltaTime * 0.9
-
-	if previewModel and previewModel.PrimaryPart then
-		previewModel:PivotTo(CFrame.Angles(0, previewRotation, 0))
-	end
-
-	if crackingOverlay.Visible then
-		return
 	end
 end)

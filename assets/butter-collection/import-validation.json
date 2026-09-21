@@ -1,0 +1,37 @@
+[
+  {
+    "type": "Plain",
+    "fbx_reimport": "passed",
+    "wrapper_pieces": 36,
+    "embedded_texture_loaded": true,
+    "largest_mesh_triangles": 12288
+  },
+  {
+    "type": "Salted",
+    "fbx_reimport": "passed",
+    "wrapper_pieces": 36,
+    "embedded_texture_loaded": true,
+    "largest_mesh_triangles": 12288
+  },
+  {
+    "type": "Golden",
+    "fbx_reimport": "passed",
+    "wrapper_pieces": 36,
+    "embedded_texture_loaded": true,
+    "largest_mesh_triangles": 12288
+  },
+  {
+    "type": "Rainbow",
+    "fbx_reimport": "passed",
+    "wrapper_pieces": 36,
+    "embedded_texture_loaded": true,
+    "largest_mesh_triangles": 12288
+  },
+  {
+    "type": "Cosmic",
+    "fbx_reimport": "passed",
+    "wrapper_pieces": 36,
+    "embedded_texture_loaded": true,
+    "largest_mesh_triangles": 12288
+  }
+]
