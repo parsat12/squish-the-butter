@@ -793,13 +793,22 @@ do
 	beebohDetailPanel.BackgroundTransparency = 1
 	beebohDetailStroke.Enabled = false
 	beebohDetailViewport.Position = UDim2.fromOffset(34, 66)
-	beebohDetailViewport.Size = UDim2.fromOffset(172, 142)
-	beebohDetailInfo.Position = UDim2.fromOffset(16, 218)
-	beebohDetailInfo.Size = UDim2.new(1, -28, 0, 104)
+	beebohDetailViewport.Size = UDim2.fromOffset(172, 112)
+	beebohDetailInfo.Position = UDim2.fromOffset(16, 184)
+	beebohDetailInfo.Size = UDim2.new(1, -28, 0, 82)
 	beebohDetailInfo.TextSize = 17
 	beebohEquipButton.Position = UDim2.new(0, 14, 1, -156)
 	beebohRenameButton.Position = UDim2.new(0, 14, 1, -104)
 	beebohDeleteButton.Position = UDim2.new(0, 14, 1, -52)
+	UI.kitchenButton = Instance.new("TextButton")
+	UI.kitchenButton.Name = "KitchenPlacement"
+	UI.kitchenButton.Text = "Place in kitchen"
+	UI.kitchenButton.TextSize = 17
+	UI.kitchenButton.TextColor3 = ink
+	UI.kitchenButton.Position = UDim2.new(0, 14, 1, -208)
+	UI.kitchenButton.Size = UDim2.new(1, -28, 0, 44)
+	UI.kitchenButton.Parent = beebohDetailPanel
+	UI.button(UI.kitchenButton, Color3.fromRGB(255, 213, 81))
 	UI.button(shopButton, mint, 20)
 	UI.button(beebohInventoryButton, blue, 20)
 	UI.button(buyButton, mint)
@@ -856,10 +865,6 @@ local revealModel = nil
 local CRACKING_BUTTER_CFRAME = CFrame.Angles(0, math.rad(180), 0)
 
 local function orientButterForDisplay(model, butterId)
-	if butterId == "Salted" then
-		model:PivotTo(CRACKING_BUTTER_CFRAME)
-		return model:GetPivot()
-	end
 	local body = model:FindFirstChild("ButterBody", true)
 	local labels = {}
 	local largestLabel = nil
@@ -1360,7 +1365,8 @@ local function hitCrackingButter()
 	end)
 end
 
-showButterPreview = function(butterId)
+showButterPreview = function(butterId, tablePart)
+	UI.tableContext = tablePart
 	local butter = state.ButterConfig[butterId]
 	if not butter then
 		return
@@ -1496,7 +1502,7 @@ local function makeButterHotbarButton(butterId)
 	button.Activated:Connect(function()
 		message.Text = `Equipped {butter.Name}.`
 		message.TextColor3 = Color3.fromRGB(83, 55, 21)
-		showButterPreview(butterId)
+		showButterPreview(butterId, UI.tableContext)
 	end)
 
 	table.insert(butterHotbarButtons, button)
@@ -1610,6 +1616,7 @@ local function showBeebohDetail(beebohItem, index)
 	beebohDetailInfo.Text = `Type\n{beeboh.Name}\n{beeboh.Rarity} / +{beeboh.CoinsPerSecond}/sec`
 	beebohDetailInfo.TextColor3 = if rarity then rarity.Color else Color3.fromRGB(255, 255, 255)
 	beebohEquipButton.Text = if isBeebohEquipped(index) then "Unequip" else "Equip"
+	UI.kitchenButton.Text = if table.find(state.KitchenBeebohs or {}, index) then "Return to inventory" else "Place in kitchen"
 	beebohEquipButton.BackgroundColor3 = if isBeebohEquipped(index) then Color3.fromRGB(255, 173, 51) else Color3.fromRGB(76, 166, 255)
 	beebohDetailPanel.Visible = true
 end
@@ -1791,6 +1798,7 @@ refresh = function()
 	refreshBeebohInventory()
 end
 
+local syncGroceryClaims
 applyResponse = function(response)
 	if not response then
 		message.Text = "Something went wrong."
@@ -1799,6 +1807,7 @@ applyResponse = function(response)
 
 	if response.State then
 		state = response.State
+		if syncGroceryClaims then syncGroceryClaims(state) end
 	end
 
 	if response.Message then
@@ -1816,6 +1825,25 @@ applyResponse = function(response)
 end
 
 local function crackSelectedButter()
+	if UI.tableContext then
+		local config = state and state.ButterConfig[selectedButterId]
+		if not config or (state.Butter[selectedButterId] or 0) <= 0 then
+			message.Text = "Choose a butter you own."
+			return
+		end
+		if #state.Beebohs >= (state.MaxBeebohs or 20) then
+			message.Text = "Your Beeboh inventory is full."
+			return
+		end
+		local ok, reason = require(ReplicatedStorage.Shared:WaitForChild("TableButter")).Start(
+			UI.tableContext, selectedButterId, config, remotes:WaitForChild("CrackKitchenButter"), applyResponse)
+		if ok then
+			previewPanel.Visible = false
+			clearPreview()
+			UI.tableContext = nil
+		else message.Text = reason end
+		return
+	end
 	beginCrackingOverlay()
 end
 
@@ -1830,6 +1858,12 @@ local function saveSelectedBeebohName()
 	applyResponse(RenameBeeboh:InvokeServer(selectedBeebohIndex, newName))
 end
 
+task.spawn(function()
+	syncGroceryClaims = require(ReplicatedStorage.Shared:WaitForChild("GroceryPickupClient")).Start(
+		remotes:WaitForChild("PickupButter"), applyResponse
+	)
+	if state then syncGroceryClaims(state) end
+end)
 PrizeRevealed.OnClientEvent:Connect(applyResponse)
 
 previewCrackButton.Activated:Connect(function()
@@ -1841,6 +1875,7 @@ revealCloseButton.Activated:Connect(function()
 end)
 
 previewCloseButton.Activated:Connect(function()
+	UI.tableContext = nil
 	previewPanel.Visible = false
 	clearPreview()
 end)
@@ -1890,6 +1925,30 @@ beebohEquipButton.Activated:Connect(function()
 	end
 
 	applyResponse(ToggleEquipBeeboh:InvokeServer(selectedBeebohIndex))
+end)
+
+UI.kitchenButton.Activated:Connect(function()
+	if selectedBeebohIndex then
+		applyResponse(remotes:WaitForChild("ToggleKitchenBeeboh"):InvokeServer(selectedBeebohIndex))
+	end
+end)
+
+task.spawn(function()
+	remotes:WaitForChild("OpenKitchenCrack").OnClientEvent:Connect(function(tablePart)
+		applyResponse(GetState:InvokeServer())
+		if not state then return end
+		local selected, order = nil, math.huge
+		for id, amount in pairs(state.Butter) do
+			local config = state.ButterConfig[id]
+			if amount > 0 and config and config.Order < order then selected, order = id, config.Order end
+		end
+		if selectedButterId and (state.Butter[selectedButterId] or 0) > 0 then selected = selectedButterId end
+		if selected then showButterPreview(selected, tablePart) else message.Text = "You do not have any butter to crack." end
+	end)
+end)
+
+task.spawn(function()
+	require(ReplicatedStorage.Shared:WaitForChild("KitchenGuide")).Start()
 end)
 
 beebohDeleteButton.Activated:Connect(function()

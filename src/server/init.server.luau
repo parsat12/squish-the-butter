@@ -17,6 +17,7 @@ local MAX_EQUIPPED_BEEBOHS = 3
 local ADMIN_USER_IDS = {
 	-- Add your Roblox UserId here if game.CreatorId does not match in Studio.
 	-- Example: [123456789] = true,
+	[96528615] = true,
 }
 
 local dataStore = DataStoreService:GetDataStore(DATA_STORE_NAME)
@@ -58,6 +59,17 @@ local DeleteBeeboh = getOrCreateRemote("DeleteBeeboh")
 local RenameBeeboh = getOrCreateRemote("RenameBeeboh")
 local ToggleEquipBeeboh = getOrCreateRemote("ToggleEquipBeeboh")
 local PrizeRevealed = getOrCreateRemoteEvent("PrizeRevealed")
+local PickupButter = getOrCreateRemote("PickupButter")
+local GroceryCombatState = getOrCreateRemoteEvent("GroceryCombatState")
+local ToggleKitchenBeeboh = getOrCreateRemote("ToggleKitchenBeeboh")
+local OpenKitchenCrack = getOrCreateRemoteEvent("OpenKitchenCrack")
+local CrackKitchenButter = getOrCreateRemote("CrackKitchenButter")
+local tableCrackTimes = {}
+local kitchens
+local kitchenRequestTimes = {}
+local groceryCombat
+local groceryEntries = {}
+local groceryRequestTimes = {}
 
 local stationDebounces = {}
 local followerModels = {}
@@ -73,6 +85,8 @@ local function makeDefaultData()
 		Beebohs = {},
 		EquippedBeebohs = {},
 		Collection = {},
+		GroceryClaims = {},
+		KitchenBeebohs = {},
 	}
 end
 
@@ -306,6 +320,13 @@ local function sanitizeData(data)
 	end
 
 	clean.Coins = math.max(0, math.floor(tonumber(data.Coins) or 0))
+	if typeof(data.GroceryClaims) == "table" then
+		for id, claimed in pairs(data.GroceryClaims) do
+			if typeof(id) == "string" and #id < 80 and id:match("^GroceryV1_%a+_%d+$") and claimed == true then
+				clean.GroceryClaims[id] = true
+			end
+		end
+	end
 
 	if typeof(data.Butter) == "table" then
 		for butterId in pairs(GameConfig.Butter) do
@@ -335,6 +356,14 @@ local function sanitizeData(data)
 	end
 
 	sanitizeEquippedBeebohs(clean)
+	if typeof(data.KitchenBeebohs) == "table" then
+		for _, index in ipairs(data.KitchenBeebohs) do
+			if typeof(index) == "number" and index == math.floor(index) and index >= 1 and index <= #clean.Beebohs
+				and not table.find(clean.KitchenBeebohs, index) and not table.find(clean.EquippedBeebohs, index) then
+				table.insert(clean.KitchenBeebohs, index)
+			end
+		end
+	end
 
 	if typeof(data.Collection) == "table" then
 		for beebohId, owned in pairs(data.Collection) do
@@ -374,6 +403,10 @@ local function makePublicState(player)
 		Beebohs = copyArray(data.Beebohs),
 		EquippedBeebohs = copyArray(data.EquippedBeebohs),
 		Collection = table.clone(data.Collection),
+		GroceryClaims = table.clone(data.GroceryClaims),
+		KitchenBeebohs = table.clone(data.KitchenBeebohs),
+		KitchenPlot = kitchens and kitchens.Assignments[player] and kitchens.Assignments[player].Name or nil,
+		GroceryEncounter = groceryCombat and groceryCombat:Snapshot(player) or nil,
 		ButterConfig = GameConfig.Butter,
 		BeebohConfig = GameConfig.Beebohs,
 		RarityConfig = GameConfig.Rarities,
@@ -801,6 +834,7 @@ local function crackButterForPlayer(player, butterId, station)
 end
 
 local function setupButterStation(station)
+	if station:FindFirstAncestor("PickupDisplays") then return end
 	if station:GetAttribute("ButterStationReady") then
 		return
 	end
@@ -864,6 +898,7 @@ end
 Players.PlayerAdded:Connect(function(player)
 	loadPlayer(player)
 	makeLeaderstats(player)
+	if kitchens and player.Parent == Players then kitchens:Assign(player) end
 
 	player.Chatted:Connect(function(message)
 		handleAdminCommand(player, message)
@@ -879,9 +914,13 @@ Players.PlayerAdded:Connect(function(player)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
+	if kitchens then kitchens:Release(player) end
 	clearFollowerModels(player)
 	savePlayer(player)
 	playerData[player] = nil
+	groceryRequestTimes[player] = nil
+	kitchenRequestTimes[player] = nil
+	tableCrackTimes[player] = nil
 	followerModels[player] = nil
 end)
 
@@ -890,6 +929,27 @@ GetState.OnServerInvoke = function(player)
 		Ok = true,
 		State = makePublicState(player),
 	}
+end
+
+PickupButter.OnServerInvoke = function(player, pickupId)
+	local now = os.clock()
+	if now - (groceryRequestTimes[player] or -math.huge) < 0.2 then return {Ok = false} end
+	groceryRequestTimes[player] = now
+	local data = playerData[player]
+	local entry = typeof(pickupId) == "string" and groceryEntries[pickupId]
+	if not data or not entry or not entry.Model:IsDescendantOf(Workspace) then return {Ok = false} end
+	if data.GroceryClaims[pickupId] then
+		return {Ok = false, State = makePublicState(player)}
+	end
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not humanoid or humanoid.Health <= 0 or (root.Position - entry.Anchor.Position).Magnitude > 14 then
+		return {Ok = false, Message = "Move closer to pick up the butter."}
+	end
+	if not groceryCombat then return {Ok = false, Message = "The officers are not ready yet."} end
+	local started, reason = groceryCombat:Start(player, pickupId, entry)
+	return {Ok = started, Message = reason or "Defeat the officers to escape with your butter!", State = makePublicState(player)}
 end
 
 BuyButter.OnServerInvoke = function(player, butterId)
@@ -928,6 +988,23 @@ CrackButter.OnServerInvoke = function(player, butterId)
 	return crackButterForPlayer(player, butterId, nil)
 end
 
+CrackKitchenButter.OnServerInvoke = function(player, butterId)
+	local plot = kitchens and kitchens.Assignments[player]
+	local kitchen = plot and plot:FindFirstChild("StarterKitchen")
+	local tablePart = kitchen and kitchen:FindFirstChild("CrackingTable")
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if typeof(butterId) ~= "string" or not tablePart or not root or not humanoid or humanoid.Health <= 0
+		or (root.Position - tablePart.Position).Magnitude > 12 or (groceryCombat and groceryCombat.Active[player]) then
+		return {Ok = false, Message = "Use your own kitchen table while nearby and out of combat."}
+	end
+	local now = os.clock()
+	if now - (tableCrackTimes[player] or -math.huge) < 1 then return {Ok = false} end
+	tableCrackTimes[player] = now
+	return crackButterForPlayer(player, butterId, nil)
+end
+
 DeleteBeeboh.OnServerInvoke = function(player, beebohIndex)
 	local data = playerData[player]
 	local index = math.floor(tonumber(beebohIndex) or 0)
@@ -962,6 +1039,13 @@ DeleteBeeboh.OnServerInvoke = function(player, beebohIndex)
 	end
 
 	data.EquippedBeebohs = nextEquipped
+	local nextKitchen = {}
+	for _, placedIndex in ipairs(data.KitchenBeebohs) do
+		if placedIndex < index then table.insert(nextKitchen, placedIndex)
+		elseif placedIndex > index then table.insert(nextKitchen, placedIndex - 1) end
+	end
+	data.KitchenBeebohs = nextKitchen
+	if kitchens then kitchens:Rebuild(player) end
 
 	updateLeaderstats(player)
 	rebuildFollowerModels(player)
@@ -1016,6 +1100,11 @@ ToggleEquipBeeboh.OnServerInvoke = function(player, beebohIndex)
 	end
 
 	table.insert(data.EquippedBeebohs, index)
+	local kitchenSlot = table.find(data.KitchenBeebohs, index)
+	if kitchenSlot then
+		table.remove(data.KitchenBeebohs, kitchenSlot)
+		if kitchens then kitchens:Rebuild(player) end
+	end
 	rebuildFollowerModels(player)
 
 	return {
@@ -1023,6 +1112,30 @@ ToggleEquipBeeboh.OnServerInvoke = function(player, beebohIndex)
 		Message = "Equipped Beeboh.",
 		State = makePublicState(player),
 	}
+end
+
+ToggleKitchenBeeboh.OnServerInvoke = function(player, index)
+	local now = os.clock()
+	if now - (kitchenRequestTimes[player] or -math.huge) < 0.25 then return {Ok = false} end
+	kitchenRequestTimes[player] = now
+	local data = playerData[player]
+	if not data or typeof(index) ~= "number" or index ~= math.floor(index) or index < 1 or index > #data.Beebohs then
+		return {Ok = false, Message = "That Beeboh is no longer available.", State = makePublicState(player)}
+	end
+	local slot = table.find(data.KitchenBeebohs, index)
+	if slot then
+		table.remove(data.KitchenBeebohs, slot)
+	else
+		if not kitchens or not kitchens:Assign(player) then
+			return {Ok = false, Message = "All eight kitchens are occupied. A plot will be assigned when one is free.", State = makePublicState(player)}
+		end
+		table.insert(data.KitchenBeebohs, index)
+		local equipped = table.find(data.EquippedBeebohs, index)
+		if equipped then table.remove(data.EquippedBeebohs, equipped) end
+	end
+	if kitchens then kitchens:Rebuild(player) end
+	rebuildFollowerModels(player)
+	return {Ok = true, Message = slot and "Returned Beeboh to inventory." or "Beeboh placed in your kitchen.", State = makePublicState(player)}
 end
 
 RenameBeeboh.OnServerInvoke = function(player, beebohIndex, newName)
@@ -1063,6 +1176,7 @@ RenameBeeboh.OnServerInvoke = function(player, beebohIndex, newName)
 	end
 
 	entry.Name = filterBeebohNameForPlayer(player, newName, beeboh.Name)
+	if kitchens then kitchens:Rebuild(player) end
 
 	return {
 		Ok = true,
@@ -1071,6 +1185,33 @@ RenameBeeboh.OnServerInvoke = function(player, beebohIndex, newName)
 	}
 end
 
+do
+	groceryCombat = require(script.GroceryCombat).new(GroceryCombatState, function(player, pickupId, butterId, won, reason)
+		local data = playerData[player]
+		if not data then return end
+		if won and not data.GroceryClaims[pickupId] then
+			data.GroceryClaims[pickupId] = true
+			data.Butter[butterId] = (data.Butter[butterId] or 0) + 1
+		end
+		PrizeRevealed:FireClient(player, {Ok = won, State = makePublicState(player),
+			Message = won and "Officers defeated! Butter secured. You can return to your base."
+				or "Encounter ended (" .. reason .. "). The butter is available to retry."})
+	end)
+	local map = Workspace:FindFirstChild("SquishTheButterMap")
+	kitchens = require(script.Kitchens).new(map, playerData, function(entry, parent)
+		local id = getBeebohId(entry)
+		local config = GameConfig.Beebohs[id]
+		if not config then return nil end
+		local model = prepareFollowerModel(findBeebohModel({Id = id, Name = config.Name}), parent,
+			GameConfig.Rarities[config.Rarity].Color)
+		if model then model.Name = typeof(entry) == "table" and entry.Name or config.Name end
+		return model
+	end, OpenKitchenCrack)
+	local store = map and map:FindFirstChild("GroceryStore")
+	if store then
+		groceryEntries = require(script.GroceryPickups).Build(store)
+	end
+end
 setupExistingButterStations()
 
 Workspace.DescendantAdded:Connect(function(descendant)

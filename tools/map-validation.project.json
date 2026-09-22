@@ -1,0 +1,12 @@
+{
+  "name": "MapValidation",
+  "tree": {
+    "$className": "DataModel",
+    "Workspace": {
+      "$className": "Workspace",
+      "SquishTheButterMap": {
+        "$path": "../assets/main-map/SquishTheButterMap.rbxmx"
+      }
+    }
+  }
+}

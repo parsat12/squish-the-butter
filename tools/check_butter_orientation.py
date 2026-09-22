@@ -5,7 +5,7 @@ import bpy
 from mathutils import Euler, Vector
 
 root = Path(__file__).resolve().parents[1] / "assets/butter-collection"
-for name in ("Plain", "Golden", "Rainbow", "Cosmic"):
+for name in ("Plain", "Salted", "Golden", "Rainbow", "Cosmic"):
     bpy.ops.wm.open_mainfile(filepath=str(root / name / (name + ".blend")))
     body = bpy.data.objects["ButterBody"]
     labels = [o for o in bpy.context.scene.objects if o.type == "MESH" and "_Text" in o.name]
